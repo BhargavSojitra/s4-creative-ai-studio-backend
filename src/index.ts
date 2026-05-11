@@ -20,12 +20,54 @@ const BASE_URL = process.env.BASE_URL
     : RAILWAY_PUBLIC_DOMAIN
       ? `https://${RAILWAY_PUBLIC_DOMAIN}`
       : `http://localhost:${PORT}`);
+const REQUEST_BODY_LIMIT = process.env.REQUEST_BODY_LIMIT || "100mb";
 const LOG_DIVIDER = "\n-----------------------------------------";
 const LOG_DIVIDER_END = "-----------------------------------------\n";
 
-// Allow large base64 payloads; no Vercel 4.5MB limit here.
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+type RequestWithId = express.Request & {
+  requestId?: string;
+  requestStartTime?: number;
+};
+
+const summarizeBodyForLogs = (body: GenerateRequestBody) => Object.fromEntries(
+  Object.entries(body).map(([k, v]) => {
+    if (k.toLowerCase().includes("image") && v && typeof v === "object" && "data" in (v as object)) {
+      return [k, { mimeType: (v as { mimeType: string }).mimeType, dataLength: (v as { data: string }).data?.length }];
+    }
+    return [k, v];
+  }),
+);
+
+app.use((req: RequestWithId, res, next) => {
+  const start = Date.now();
+  const requestId = `${start.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+  req.requestId = requestId;
+  req.requestStartTime = start;
+
+  console.log(LOG_DIVIDER);
+  console.log(`[${new Date(start).toISOString()}] ${req.method} ${req.originalUrl} [${requestId}] start`);
+
+  res.on("finish", () => {
+    const durationSeconds = ((Date.now() - start) / 1000).toFixed(1);
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} [${requestId}] end status=${res.statusCode} duration=${durationSeconds}s`);
+    console.log(LOG_DIVIDER_END);
+  });
+
+  res.on("close", () => {
+    if (!res.writableEnded) {
+      const durationSeconds = ((Date.now() - start) / 1000).toFixed(1);
+      console.error(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} [${requestId}] closed early status=${res.statusCode} duration=${durationSeconds}s`);
+      console.log(LOG_DIVIDER_END);
+    }
+  });
+
+  next();
+});
+
+// Allow large base64 payloads; keep limit configurable for different deploy targets.
+app.use(express.json({ limit: REQUEST_BODY_LIMIT }));
+app.use(express.urlencoded({ extended: true, limit: REQUEST_BODY_LIMIT }));
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:3000")
   .split(",")
@@ -59,25 +101,26 @@ const sendJsonError = (res: express.Response, error: unknown) => {
   return res.status(statusCode).json({ error: extractErrorMessage(error) });
 };
 
-app.post("/generate-photoshoot", async (req, res) => {
-  const start = Date.now();
+app.post("/generate-photoshoot", async (req: RequestWithId, res) => {
+  const start = req.requestStartTime ?? Date.now();
+  const requestId = req.requestId ?? "unknown";
   const body = req.body as GenerateRequestBody;
 
-  console.log(LOG_DIVIDER);
-  console.log(`[${new Date().toISOString()}] POST /generate-photoshoot`);
-  console.log(`  poses     : ${body.selectedPoses?.map((p) => p.title).join(", ") || "none"}`);
-  console.log(`  imageSize : ${body.imageSize}  aspectRatio: ${body.aspectRatio}`);
-  console.log(`  garment   : ${body.garmentImage ? "yes" : "no"}  model: ${body.modelImage ? "yes" : "no"}  bg: ${body.backgroundImage ? "yes" : "no"}`);
-  console.log(`  extras    : design=${body.designDetailImage ? "yes" : "no"} styling=${body.stylingImage ? "yes" : "no"} dupatta=${body.dupattaImage ? "yes" : "no"} blouse=${body.blouseImage ? "yes" : "no"} back=${body.backViewImage ? "yes" : "no"}`);
+  console.log(`  [${requestId}] poses     : ${body.selectedPoses?.map((p) => p.title).join(", ") || "none"}`);
+  console.log(`  [${requestId}] imageSize : ${body.imageSize}  aspectRatio: ${body.aspectRatio}`);
+  console.log(`  [${requestId}] garment   : ${body.garmentImage ? "yes" : "no"}  model: ${body.modelImage ? "yes" : "no"}  bg: ${body.backgroundImage ? "yes" : "no"}`);
+  console.log(`  [${requestId}] extras    : design=${body.designDetailImage ? "yes" : "no"} styling=${body.stylingImage ? "yes" : "no"} dupatta=${body.dupattaImage ? "yes" : "no"} blouse=${body.blouseImage ? "yes" : "no"} back=${body.backViewImage ? "yes" : "no"}`);
+  console.log(`  [${requestId}] [DEBUG] body keys:`, Object.keys(body));
+  console.log(`  [${requestId}] [DEBUG] selectedPoses raw:`, JSON.stringify(body.selectedPoses));
+  console.log(`  [${requestId}] [DEBUG] full body (images stripped):`, JSON.stringify(summarizeBodyForLogs(body), null, 2));
 
   try {
     validateGenerateRequest(body);
     assertServerConfiguration();
   } catch (error) {
     const msg = extractErrorMessage(error);
-    console.error(`  error before streaming after ${((Date.now() - start) / 1000).toFixed(1)}s - ${msg}`);
-    console.error("  raw:", error);
-    console.log(LOG_DIVIDER_END);
+    console.error(`  [${requestId}] error before streaming after ${((Date.now() - start) / 1000).toFixed(1)}s - ${msg}`);
+    console.error(`  [${requestId}] raw:`, error);
     return sendJsonError(res, error);
   }
 
@@ -90,23 +133,37 @@ app.post("/generate-photoshoot", async (req, res) => {
     for await (const image of streamPhotoshootImages(body)) {
       res.write(JSON.stringify(image) + "\n");
       count++;
-      console.log(`  streamed [${image.poseTitle}] (${count}/${body.selectedPoses.length}) - ${((Date.now() - start) / 1000).toFixed(1)}s`);
+      console.log(`  [${requestId}] streamed [${image.poseTitle}] (${count}/${body.selectedPoses.length}) - ${((Date.now() - start) / 1000).toFixed(1)}s`);
     }
 
-    console.log(`  done in ${((Date.now() - start) / 1000).toFixed(1)}s - ${count} image(s) streamed`);
+    console.log(`  [${requestId}] done in ${((Date.now() - start) / 1000).toFixed(1)}s - ${count} image(s) streamed`);
   } catch (error) {
     const msg = extractErrorMessage(error);
-    console.error(`  error after ${((Date.now() - start) / 1000).toFixed(1)}s - ${msg}`);
-    console.error("  raw:", error);
+    console.error(`  [${requestId}] error after ${((Date.now() - start) / 1000).toFixed(1)}s - ${msg}`);
+    console.error(`  [${requestId}] raw:`, error);
     res.write(JSON.stringify({ error: msg }) + "\n");
   }
 
   res.end();
-  console.log(LOG_DIVIDER_END);
 });
 
-app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+app.use((error: unknown, req: RequestWithId, res: express.Response, _next: express.NextFunction) => {
+  const requestId = req.requestId ?? "unknown";
+  console.error(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} [${requestId}] unhandled error: ${extractErrorMessage(error)}`);
+  console.error(`  [${requestId}] raw:`, error);
+
   if (res.headersSent) return;
+
+  if (
+    typeof error === "object"
+    && error !== null
+    && "type" in error
+    && error.type === "entity.too.large"
+  ) {
+    return res.status(413).json({
+      error: `PAYLOAD_TOO_LARGE: Request body exceeds the configured limit of ${REQUEST_BODY_LIMIT}.`,
+    });
+  }
 
   if (error instanceof SyntaxError && "body" in error) {
     return res.status(400).json({ error: "INVALID_JSON: Request body contains invalid JSON." });
