@@ -347,15 +347,23 @@ export async function* streamPhotoshootImages(
     }
 
     const inlineData = generatedPart.inlineData as { mimeType: string; data: string };
+    const mimeType = inlineData.mimeType || "image/png";
+    const imageData = inlineData.data;
+
+    // Update consistency reference BEFORE yielding so we can release data after
+    if (!firstGeneratedImagePart) {
+      firstGeneratedImagePart = { inlineData: { data: imageData, mimeType } };
+    }
 
     yield {
       poseTitle: pose.title,
-      url: `data:${inlineData.mimeType || "image/png"};base64,${inlineData.data}`,
+      url: `data:${mimeType};base64,${imageData}`,
     };
 
-    if (!firstGeneratedImagePart) {
-      firstGeneratedImagePart = { inlineData: { data: inlineData.data, mimeType: inlineData.mimeType } };
-    }
+    // Explicitly release the large base64 payload from the response object
+    // so the GC can reclaim it before the next iteration.
+    (generatedPart.inlineData as Record<string, unknown>).data = null;
+    (response as Record<string, unknown>).candidates = null;
 
     if (body.selectedPoses.indexOf(pose) < body.selectedPoses.length - 1) {
       await delay(1500);
