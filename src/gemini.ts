@@ -232,15 +232,15 @@ export async function* streamPhotoshootImages(
 
   if (body.blouseImage) {
     inputParts.push(imagePart(body.blouseImage));
-    blousePrompt = "[STRICT BLOUSE/TOP LOCK]: Use the provided Blouse Reference Image for the exact color, pattern, cut, sleeves, fit, and fabric of the blouse or top. The blouse in the generated image must match the reference and must not be redesigned.";
+    blousePrompt = `[STRICT BLOUSE/TOP LOCK]: Use the provided Blouse Reference Image for the exact color, pattern, cut, and fabric of the blouse or top. The blouse in the generated image MUST perfectly match this reference image.`;
   }
   if (body.dupattaImage) {
     inputParts.push(imagePart(body.dupattaImage));
-    dupattaPrompt = "[STRICT DUPATTA LOCK]: Use the provided Dupatta Reference Image for the exact color, pattern, border width, motif placement, drape character, and fabric. Do not hallucinate a different dupatta.";
+    dupattaPrompt = `[STRICT DUPATTA LOCK]: Use the provided Dupatta Reference Image for the exact color, pattern, border, and fabric of the dupatta. The dupatta in the generated image MUST perfectly match this reference image. Do not hallucinate a different dupatta.`;
   }
   if (body.backViewImage) {
     inputParts.push(imagePart(body.backViewImage));
-    backViewPrompt = "[BACK VIEW REFERENCE]: Use the provided Back View Reference Image to accurately render the back design, neckline, tie details, closures, and back embellishments.";
+    backViewPrompt = `[BACK VIEW REFERENCE]: Use the provided Back View Reference Image to accurately render the back design, neckline, and details of the garment. Ensure the back of the garment matches this reference exactly when the model is turned around.`;
   }
   if (body.modelImage) {
     inputParts.push(imagePart(body.modelImage));
@@ -254,42 +254,28 @@ export async function* streamPhotoshootImages(
   }
   if (body.designDetailImage) {
     inputParts.push(imagePart(body.designDetailImage));
-    designPrompt = "[MICROSCOPIC DESIGN OVERRIDE]: Use the provided Design Reference Image for all embroidery, handwork, zari, sequins, beadwork, thread-work, and intricate patterns. Preserve exact placement, scale, spacing, and finish.";
+    designPrompt = `[MICROSCOPIC DESIGN OVERRIDE]: Use the provided Design Reference Image for all embroidery, handwork, and intricate patterns. Render every individual bead, thread, and sequin with 3D depth and metallic/silk luster. Replicate the specific hand-stitched feel seen in the reference.`;
   }
   if (body.stylingImage) {
     inputParts.push(imagePart(body.stylingImage));
-    stylingPrompt = "[STYLE & POSE REFERENCE]: Use the provided Styling Reference Image for the overall aesthetic, lighting mood, and composition style while preserving the exact garment and model identity.";
+    stylingPrompt = `[STYLE & POSE REFERENCE]: Use the provided Styling Reference Image for the overall aesthetic, lighting mood, and model's pose/attitude. Replicate the vibe and composition style while maintaining the garment and model identity.`;
   }
 
   const sessionLockProtocol = `
-  [ULTRA-HIGH FIDELITY TEXTILE PROTOCOL]
-  - TEXTILE LOCK: Do not change the textile itself. Preserve the exact fabric type, weave structure, surface grain, thread density, sheen level, thickness, fall, and hand-feel appearance from the reference garment.
-  - TEXTURE SHARPNESS LOCK: Render the fabric texture with crisp, high-frequency detail. The weave, yarn definition, embroidery edges, print edges, zari, sequins, beadwork, lace, and border details must appear sharp and clearly resolved, never soft or smeared.
-  - GARMENT CONSISTENCY LOCK: Do not invent, remove, simplify, or rearrange any embroidery, motifs, prints, borders, pleats, seams, stitch lines, trims, or embellishments. Keep motif placement, border width, print scale, and pattern density identical to the reference garment.
-  - SEAM & STITCHING REALISM: Include realistic seam puckering, tension at stitch lines, natural fold behavior, and 3D depth for every visible construction detail.
-  - EMBROIDERY DEPTH: ${designPrompt || "Preserve embroidery from garment source with extreme 3D detail and exact placement."}
-  - FABRIC INTEGRITY: Replicate the subtle fabric grain, weave, and physical weight including natural drapes, fall, thickness, and slight stress-wrinkles without changing the material appearance.
-  - COLOR FIDELITY: Maintain the exact garment color family, saturation, undertone, contrast, gradients, and border/blouse coordination from the reference garment.
-  ${blousePrompt ? `- BLOUSE: ${blousePrompt}` : ""}
-  ${dupattaPrompt ? `- DUPATTA: ${dupattaPrompt}` : ""}
-  ${backViewPrompt ? `- BACK VIEW: ${backViewPrompt}` : ""}
-  - CHARACTER: ${characterIdentityPrompt}
-  - LOCATION: ${environmentPrompt}
-  - FACE & MODEL SHARPNESS LOCK: The model's face, eyes, skin texture, hairline, hands, and garment-contact edges must be in sharp focus. No face blur, motion blur, soft focus, haze, double edges, or low-detail skin smoothing.
-  - IMAGE CLARITY LOCK: Produce a clean, high-resolution, tack-sharp photograph with precise edge definition and no blur on the subject or garment.
-  - STYLE: ${stylingPrompt || "Photorealistic premium fashion photography with textile accuracy prioritized over artistic styling."}
-  - CAMERA: Phase One XF, 100mm Macro Lens, f/11, ISO 50, professional high-CRI lighting, deep focus across face and garment, no motion blur.
-  [ALLOWED CHANGES]
-  - Only change the model pose, body angle, hand placement, and scene composition as required by the selected pose.
-  - Keep the garment itself unchanged even when the drape shifts naturally with the pose.
-  [DO NOT]
-  - Do not change garment fabric, weave, texture, color, print scale, embroidery placement, border design, or embellishment layout.
-  - Do not replace the original textile with a smoother, shinier, flatter, or more generic-looking fabric.
-  - Do not add extra embroidery, sequins, lace, trims, folds, shadows, or design elements that are not present in the references.
-  - Do not blur, oversoften, beautify, airbrush, or stylize the fabric surface, face, or garment edges.
-  - Do not generate a low-detail face, soft eyes, waxy skin, fuzzy hairline, or out-of-focus hands.
-  - Do not crop out critical garment details or hide important borders, pallu, blouse, dupatta, sleeves, or hemline unless the pose naturally occludes them.
-  `;
+    [ULTRA-HIGH FIDELITY TEXTILE PROTOCOL]
+    - MICROSCOPIC TEXTURE LOCK: Render the specific weave of the fabric (e.g., the grainy texture of georgette, the fine parallel lines of silk, or the matte density of cotton) with sub-pixel clarity.
+    - SEAM & STITCHING REALISM: Include realistic seam puckering, tension at the stitch lines, and 3D depth for every visible thread and piping line exactly as shown in the source.
+    - EMBROIDERY DEPTH: ${designPrompt || "Preserve embroidery from garment source with extreme 3D detail."} Thread-work must show individual fiber textures and realistic shadow-casting.
+    - FABRIC INTEGRITY: Replicate the subtle fabric grain, weave, and physical weight including natural drapes and slight stress-wrinkles at the joints.
+    - COLOR FIDELITY: Maintain the exact color hex, saturation, and subtle gradients of the original garment fabric.
+    ${blousePrompt ? `- BLOUSE: ${blousePrompt}` : ''}
+    ${dupattaPrompt ? `- DUPATTA: ${dupattaPrompt}` : ''}
+    ${backViewPrompt ? `- BACK VIEW: ${backViewPrompt}` : ''}
+    - CHARACTER: ${characterIdentityPrompt}
+    - LOCATION: ${environmentPrompt}
+    - STYLE: ${stylingPrompt || "Professional high-end fashion editorial style."}
+    - CAMERA: Phase One XF, 100mm Macro Lens, f/11, ISO 50, professional studio high-CRI lighting.
+    `;
 
   const generationConfig = {
     maxOutputTokens: 32768,
@@ -318,20 +304,19 @@ export async function* streamPhotoshootImages(
     if (firstGeneratedImagePart) {
       currentInputParts.push(firstGeneratedImagePart);
       consistencyPrompt = `
-      [STRICT CONSISTENCY LOCK]:
-      1. EXACT SAME BACKGROUND: You MUST use the exact same background/location/environment as shown in the provided generated reference image.
-      2. EXACT SAME MODEL LOOK: The model's face, hairstyle, makeup, and skin tone MUST be identical to the provided generated reference image.
-      3. EXACT SAME GARMENT: The textile, texture, embroidery, borders, print scale, blouse details, dupatta details, and drape behavior must remain the same.
-      4. Only change the pose to match the [REQUIRED POSE].
-      `;
+            [STRICT CONSISTENCY LOCK]: 
+            1. EXACT SAME BACKGROUND: You MUST use the exact same background/location/environment as shown in the provided generated reference image. Do not change the setting.
+            2. EXACT SAME MODEL LOOK: The model's face, facial features, hairstyle, makeup, and skin tone MUST be identical to the provided generated reference image.
+            3. Only change the pose/movement to match the [REQUIRED POSE].
+            `;
     }
 
     const fullPrompt = `
-    ${sessionLockProtocol}
-    [REQUIRED POSE]: ${pose.prompt}
-    ${consistencyPrompt}
-    [FINAL MANDATE]: Preserve the exact same real garment and textile from the reference images. The output must be a tack-sharp, realistic, high-resolution photograph with crisp facial details and uncompromised fabric texture. Only the pose and scene composition may change when requested.
-    `;
+        ${sessionLockProtocol}
+        [REQUIRED POSE]: ${pose.prompt}
+        ${consistencyPrompt}
+        [FINAL MANDATE]: Replicate the reference garment'S microscopic details with 100% accuracy. The output must look like a real, un-edited high-resolution photograph. No generic AI smoothing. Maintain every unique textile imperfection, seam pucker, and intricate embroidery motif.
+        `;
 
     const response = await generateWithRetry(
       ai,
