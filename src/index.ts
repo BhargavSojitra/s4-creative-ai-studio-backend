@@ -109,7 +109,8 @@ app.post("/generate-photoshoot", async (req: RequestWithId, res) => {
   console.log(`  [${requestId}] poses     : ${body.selectedPoses?.map((p) => p.title).join(", ") || "none"}`);
   console.log(`  [${requestId}] imageSize : ${body.imageSize}  aspectRatio: ${body.aspectRatio}`);
   console.log(`  [${requestId}] garment   : ${body.garmentImage ? "yes" : "no"}  model: ${body.modelImage ? "yes" : "no"}  bg: ${body.backgroundImage ? "yes" : "no"}`);
-  console.log(`  [${requestId}] extras    : design=${body.designDetailImage ? "yes" : "no"} styling=${body.stylingImage ? "yes" : "no"} dupatta=${body.dupattaImage ? "yes" : "no"} blouse=${body.blouseImage ? "yes" : "no"} back=${body.backViewImage ? "yes" : "no"}`);
+  console.log(`  [${requestId}] extras    : design=${body.designDetailImage ? "yes" : "no"} styling=${body.stylingImage ? "yes" : "no"} dupatta=${body.dupattaImage ? "yes" : "no"} blouse=${body.blouseImage ? "yes" : "no"} back=${body.backViewImage ? "yes" : "no"} sleeve=${body.unstitchedSleeveImage ? "yes" : "no"} closeup=${body.unstitchedCloseupImage ? "yes" : "no"} dummy=${body.dummyShootImage ? "yes" : "no"}`);
+  console.log(`  [${requestId}] styles    : expression=${body.expressionPrompt ? "yes" : "no"} neckline=${body.necklinePrompt ? "yes" : "no"} sleeveStyle=${body.sleevePrompt ? "yes" : "no"}`);
   console.log(`  [${requestId}] [DEBUG] body keys:`, Object.keys(body));
   console.log(`  [${requestId}] [DEBUG] selectedPoses raw:`, JSON.stringify(body.selectedPoses));
   console.log(`  [${requestId}] [DEBUG] full body (images stripped):`, JSON.stringify(summarizeBodyForLogs(body), null, 2));

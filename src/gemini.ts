@@ -6,7 +6,7 @@ import { tmpdir } from "os";
 const MODEL_NAME =
   process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image-preview";
 
-type Pose = { id: string; title: string; prompt: string };
+type Pose = { id: string; title: string; prompt: string; category?: string };
 
 type InlineImagePayload = { data: string; mimeType: string };
 
@@ -24,6 +24,12 @@ export type GenerateRequestBody = {
   dupattaImage?: InlineImagePayload | null;
   blouseImage?: InlineImagePayload | null;
   backViewImage?: InlineImagePayload | null;
+  unstitchedSleeveImage?: InlineImagePayload | null;
+  unstitchedCloseupImage?: InlineImagePayload | null;
+  dummyShootImage?: InlineImagePayload | null;
+  expressionPrompt?: string;
+  necklinePrompt?: string;
+  sleevePrompt?: string;
 };
 
 export type GeneratedImagePayload = { poseTitle: string; url: string };
@@ -221,7 +227,17 @@ export async function* streamPhotoshootImages(
   validateGenerateRequest(body);
 
   const ai = createClient();
+
+  const expressionPrompt = body.expressionPrompt || "";
+  const necklinePrompt = body.necklinePrompt || "";
+  const sleevePrompt = body.sleevePrompt || "";
+
   const inputParts: unknown[] = [imagePart(body.garmentImage)];
+  const imageDescriptions: string[] = [
+    "Input Image 1: The original uploaded garment. This is the absolute master reference for the fabric, colors, pattern, print, designs, and texture. Do NOT change or add any embroidery/patterns not visible here.",
+  ];
+  let imageIndex = 2;
+
   let characterIdentityPrompt: string;
   let environmentPrompt = body.backgroundPrompt;
   let designPrompt = "";
@@ -229,52 +245,99 @@ export async function* streamPhotoshootImages(
   let dupattaPrompt = "";
   let blousePrompt = "";
   let backViewPrompt = "";
+  let unstitchedPrompt = "";
+  let dummyShootPrompt = "";
 
+  if (body.dummyShootImage) {
+    inputParts.push(imagePart(body.dummyShootImage));
+    imageDescriptions.push(`Input Image ${imageIndex}: Dummy Shoot Reference showing desired layout and bottom styling.`);
+    dummyShootPrompt = `[DUMMY SHOOT REFERENCE - Input Image ${imageIndex}]: Use this image to understand the required garment structure, specifically the pant/bottom style, the way the fabric drapes, and the overall outfit silhouette. The final garment construction MUST reflect this reference.`;
+    imageIndex++;
+  }
+  if (body.unstitchedSleeveImage) {
+    inputParts.push(imagePart(body.unstitchedSleeveImage));
+    imageDescriptions.push(`Input Image ${imageIndex}: Unstitched Sleeve fabrics reference.`);
+    unstitchedPrompt += `[UNSTITCHED SLEEVE REFERENCE - Input Image ${imageIndex}]: Use the provided Sleeve Fabric Image to render the sleeves of the outfit. The sleeves should be stitched according to this fabric's pattern and texture. `;
+    imageIndex++;
+  }
+  if (body.unstitchedCloseupImage) {
+    inputParts.push(imagePart(body.unstitchedCloseupImage));
+    imageDescriptions.push(`Input Image ${imageIndex}: Close-up photo showing cloth weave, print, and exact print details.`);
+    unstitchedPrompt += `[UNSTITCHED CLOSE-UP REFERENCE - Input Image ${imageIndex}]: Refer to the Close-up Image for CRYSTAL CLEAR fabric quality, pattern, texture, print quality, and original details. Replicate the original design features with absolute accuracy and extreme sharpness across the entire stitched garment. `;
+    imageIndex++;
+  }
   if (body.blouseImage) {
     inputParts.push(imagePart(body.blouseImage));
-    blousePrompt = `[STRICT BLOUSE/TOP LOCK]: Use the provided Blouse Reference Image for the exact color, pattern, cut, and fabric of the blouse or top. The blouse in the generated image MUST perfectly match this reference image.`;
+    imageDescriptions.push(`Input Image ${imageIndex}: Blouse Reference Image.`);
+    blousePrompt = `[STRICT BLOUSE/TOP LOCK - Input Image ${imageIndex}]: Use the provided Blouse Reference Image for the exact color, pattern, cut, and fabric of the blouse or top. The blouse in the generated image MUST perfectly match this reference image.`;
+    imageIndex++;
   }
   if (body.dupattaImage) {
     inputParts.push(imagePart(body.dupattaImage));
-    dupattaPrompt = `[STRICT DUPATTA LOCK]: Use the provided Dupatta Reference Image for the exact color, pattern, border, and fabric of the dupatta. The dupatta in the generated image MUST perfectly match this reference image. Do not hallucinate a different dupatta.`;
+    imageDescriptions.push(`Input Image ${imageIndex}: Dupatta Reference Image.`);
+    dupattaPrompt = `[STRICT DUPATTA LOCK - Input Image ${imageIndex}]: Use the provided Dupatta Reference Image for the exact color, pattern, border, and fabric of the dupatta. The dupatta in the generated image MUST perfectly match this reference image. Do not hallucinate a different dupatta.`;
+    imageIndex++;
   }
   if (body.backViewImage) {
     inputParts.push(imagePart(body.backViewImage));
-    backViewPrompt = `[BACK VIEW REFERENCE]: Use the provided Back View Reference Image to accurately render the back design, neckline, and details of the garment. Ensure the back of the garment matches this reference exactly when the model is turned around.`;
+    imageDescriptions.push(`Input Image ${imageIndex}: Back View Reference Image.`);
+    backViewPrompt = `[BACK VIEW REFERENCE - Input Image ${imageIndex}]: Use the provided Back View Reference Image to accurately render the back design, neckline, and details of the garment. Ensure the back of the garment matches this reference exactly when the model is turned around.`;
+    imageIndex++;
   }
   if (body.modelImage) {
     inputParts.push(imagePart(body.modelImage));
-    characterIdentityPrompt = `REPLICATE THE PERSON IN THE CHARACTER REFERENCE IMAGE EXACTLY. Face shape, skin tone, and features must be identical. Notes: ${body.modelAttributes}.`;
+    imageDescriptions.push(`Input Image ${imageIndex}: Model Character Reference.`);
+    characterIdentityPrompt = `REPLICATE THE PERSON IN THE CHARACTER REFERENCE IMAGE [Input Image ${imageIndex}] EXACTLY. Face shape, skin tone, and features must be identical. ${expressionPrompt ? `EXPRESSION: ${expressionPrompt}.` : ""} Notes: ${body.modelAttributes}.`;
+    imageIndex++;
   } else {
-    characterIdentityPrompt = `${body.modelAttributes}. Consistent Indian model features with realistic skin textures.`;
+    characterIdentityPrompt = `${body.modelAttributes}. Consistent Indian model features with realistic skin textures. ${expressionPrompt ? `EXPRESSION: ${expressionPrompt}.` : ""}`;
   }
   if (body.backgroundImage) {
     inputParts.push(imagePart(body.backgroundImage));
-    environmentPrompt = "PLACE THE MODEL IN THE EXACT ENVIRONMENT SHOWN IN THE BACKGROUND IMAGE.";
+    imageDescriptions.push(`Input Image ${imageIndex}: Background Scene Reference.`);
+    environmentPrompt = `PLACE THE MODEL IN THE EXACT ENVIRONMENT SHOWN IN THE BACKGROUND IMAGE [Input Image ${imageIndex}].`;
+    imageIndex++;
   }
   if (body.designDetailImage) {
     inputParts.push(imagePart(body.designDetailImage));
-    designPrompt = `[MICROSCOPIC DESIGN OVERRIDE]: Use the provided Design Reference Image for all embroidery, handwork, and intricate patterns. Render every individual bead, thread, and sequin with 3D depth and metallic/silk luster. Replicate the specific hand-stitched feel seen in the reference.`;
+    imageDescriptions.push(`Input Image ${imageIndex}: Direct Design/Pattern/Embroidery Closeup Reference.`);
+    designPrompt = `[MICROSCOPIC DESIGN OVERRIDE - Input Image ${imageIndex}]: Use the provided Design Reference Image for all print, pattern, embroidery, or handwork. Replicate the specific patterns with extreme sharpness and clarity.`;
+    imageIndex++;
   }
   if (body.stylingImage) {
     inputParts.push(imagePart(body.stylingImage));
-    stylingPrompt = `[STYLE & POSE REFERENCE]: Use the provided Styling Reference Image for the overall aesthetic, lighting mood, and model's pose/attitude. Replicate the vibe and composition style while maintaining the garment and model identity.`;
+    imageDescriptions.push(`Input Image ${imageIndex}: Pose & Aesthetic Styling Reference.`);
+    stylingPrompt = `[STYLE & POSE REFERENCE - Input Image ${imageIndex}]: Use the provided Styling Reference Image for the overall aesthetic, lighting mood, and model's pose/attitude. Replicate the vibe and composition style while maintaining the garment and model identity.`;
+    imageIndex++;
   }
 
+  const hasLongShot = body.selectedPoses.some((p) => p.category === "Long Shot");
+
   const sessionLockProtocol = `
+    [INPUT IMAGE INDEXING & ROLES]
+    ${imageDescriptions.map((desc) => "- " + desc).join("\n")}
+
     [ULTRA-HIGH FIDELITY TEXTILE PROTOCOL]
-    - MICROSCOPIC TEXTURE LOCK: Render the specific weave of the fabric (e.g., the grainy texture of georgette, the fine parallel lines of silk, or the matte density of cotton) with sub-pixel clarity.
-    - SEAM & STITCHING REALISM: Include realistic seam puckering, tension at the stitch lines, and 3D depth for every visible thread and piping line exactly as shown in the source.
-    - EMBROIDERY DEPTH: ${designPrompt || "Preserve embroidery from garment source with extreme 3D detail."} Thread-work must show individual fiber textures and realistic shadow-casting.
-    - FABRIC INTEGRITY: Replicate the subtle fabric grain, weave, and physical weight including natural drapes and slight stress-wrinkles at the joints.
+    - MICROSCOPIC TEXTURE LOCK: Render the exact fabric weave, material details, and color tone of Input Image 1. Replicate it with CRYSTAL CLEAR sharpness and sub-pixel clarity.
+    - SEAM & STITCHING REALISM: Include realistic seam puckering, tension at the stitch lines, and sharp 3D depth for every visible thread and piping line.
+    - GRAPHIC & DETAIL ACCURACY: ${designPrompt || "Do NOT add any extra, new, or unrequested embroidery, lace, border, beadwork, or embellishments. Replicate ONLY the exact print, design, solid color, embroidery, or pattern present in the original uploaded garment image (Input Image 1). If Input Image 1 is solid/plain, keep the generated garment 100% solid/plain without adding any prints or embroidery."}
+    - NO DESIGN DEVIATION: Keep original colors, print sizes, patterns, and stripes of Input Image 1 exactly. Do not randomize, shift, or replace the pattern/design in the photoshoot.
+    - FABRIC INTEGRITY: Replicate the subtle fabric grain and weave with high-magnification clarity.
     - COLOR FIDELITY: Maintain the exact color hex, saturation, and subtle gradients of the original garment fabric.
     ${blousePrompt ? `- BLOUSE: ${blousePrompt}` : ''}
     ${dupattaPrompt ? `- DUPATTA: ${dupattaPrompt}` : ''}
     ${backViewPrompt ? `- BACK VIEW: ${backViewPrompt}` : ''}
+    ${unstitchedPrompt ? `- UNSTITCHED COMPONENTS: ${unstitchedPrompt}` : ''}
+    ${dummyShootPrompt ? `- DUMMY REFERENCE: ${dummyShootPrompt}` : ''}
+    ${necklinePrompt ? `- NECKLINE STYLE: ${necklinePrompt}` : ''}
+    ${sleevePrompt ? `- SLEEVE STYLE: ${sleevePrompt}` : ''}
+    - SLEEVE INTEGRATION: The sleeves MUST be rendered as an inseparable part of the main garment, with matching fabric, print, and seamless stitching. If a sleeve fabric is provided, blend it perfectly into the shoulder and armhole of the top.
+    - GARMENT SHAPE & DRAPE: The garment MUST naturally take the shape of the model's body and the chosen pant type. Ensure realistic fabric folds, shadows, and drapes that reflect the underlying physical structure of the model and bottoms.
     - CHARACTER: ${characterIdentityPrompt}
     - LOCATION: ${environmentPrompt}
     - STYLE: ${stylingPrompt || "Professional high-end fashion editorial style."}
-    - CAMERA: Phase One XF, 100mm Macro Lens, f/11, ISO 50, professional studio high-CRI lighting.
+    - COMPOSITION: ${hasLongShot ? "Varies based on pose. For Long Shots, use a wide-angle cinematic composition capturing the model within the environment. For standard poses, the model should be the central focus." : "Full-body or mid-shot framing. The model MUST be the dominant central focus, filling 85-95% of the vertical frame height. Zero space above the head or below the feet in full-body shots. Absolutely no wide-angle 'small person' shots unless explicitly requested by a Long Shot pose."}
+    - CAMERA: Phase One XF, 80mm-110mm Lens, f/11, ISO 50, professional studio high-CRI lighting.
     `;
 
   const generationConfig = {
