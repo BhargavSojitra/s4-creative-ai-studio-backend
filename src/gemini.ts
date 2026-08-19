@@ -317,13 +317,14 @@ export async function* streamPhotoshootImages(
     [INPUT IMAGE INDEXING & ROLES]
     ${imageDescriptions.map((desc) => "- " + desc).join("\n")}
 
-    [ULTRA-HIGH FIDELITY TEXTILE PROTOCOL]
-    - MICROSCOPIC TEXTURE LOCK: Render the exact fabric weave, material details, and color tone of Input Image 1. Replicate it with CRYSTAL CLEAR sharpness and sub-pixel clarity.
-    - SEAM & STITCHING REALISM: Include realistic seam puckering, tension at the stitch lines, and sharp 3D depth for every visible thread and piping line.
+    [ULTRA-HIGH FIDELITY TEXTILE & CRAFT PROTOCOL]
+    - MICROSCOPIC TEXTURE LOCK: Render the absolute highest resolution fabric weave, fiber details, and precise color tone of Input Image 1. Replicate it with extreme pixel-perfect sharpness and crystal-clear clarity.
+    - CRAFT & EMBROIDERY PRECISION: Ensure that every piece of garment work (including hand embroidery, zari threadwork, delicate sequin arrangements, beadwork, mirror-work, lace detailing, and fine borders) is hyper-focused, completely sharp, and deeply highlighted. No parts of the embroidery or pattern should be blurry, muddy, or smoothed out.
+    - SEAM & STITCHING REALISM: Render realistic seam puckering, thread tension at the stitch lines, and 3D depth for every single visible stitch, piping line, and border trim with maximum definition.
     - GRAPHIC & DETAIL ACCURACY: ${designPrompt || "Do NOT add any extra, new, or unrequested embroidery, lace, border, beadwork, or embellishments. Replicate ONLY the exact print, design, solid color, embroidery, or pattern present in the original uploaded garment image (Input Image 1). If Input Image 1 is solid/plain, keep the generated garment 100% solid/plain without adding any prints or embroidery."}
-    - NO DESIGN DEVIATION: Keep original colors, print sizes, patterns, and stripes of Input Image 1 exactly. Do not randomize, shift, or replace the pattern/design in the photoshoot.
-    - FABRIC INTEGRITY: Replicate the subtle fabric grain and weave with high-magnification clarity.
-    - COLOR FIDELITY: Maintain the exact color hex, saturation, and subtle gradients of the original garment fabric.
+    - NO DESIGN DEVIATION: Replicate all print shapes, floral motifs, geometric stripes, and borders from Input Image 1 exactly. Maintain identical scaling, spacing, and placement without distorting or randomizing the fabric patterns.
+    - FABRIC INTEGRITY: Retain the natural fabric characteristics (such as the raw slub of silk, the delicate texture of georgette, or the crisp lines of linen) with high-definition, tactile realism.
+    - COLOR FIDELITY: Replicate the precise color tones, deep pigments, and subtle dye variations of the original garment fabric with zero alteration.
     ${blousePrompt ? `- BLOUSE: ${blousePrompt}` : ''}
     ${dupattaPrompt ? `- DUPATTA: ${dupattaPrompt}` : ''}
     ${backViewPrompt ? `- BACK VIEW: ${backViewPrompt}` : ''}
@@ -337,7 +338,11 @@ export async function* streamPhotoshootImages(
     - LOCATION: ${environmentPrompt}
     - STYLE: ${stylingPrompt || "Professional high-end fashion editorial style."}
     - COMPOSITION: ${hasLongShot ? "Varies based on pose. For Long Shots, use a wide-angle cinematic composition capturing the model within the environment. For standard poses, the model should be the central focus." : "Full-body or mid-shot framing. The model MUST be the dominant central focus, filling 85-95% of the vertical frame height. Zero space above the head or below the feet in full-body shots. Absolutely no wide-angle 'small person' shots unless explicitly requested by a Long Shot pose."}
-    - CAMERA: Phase One XF, 80mm-110mm Lens, f/11, ISO 50, professional studio high-CRI lighting.
+    - HYPER-REALISM & CAMERA PROTOCOL:
+      1. NO AI SMOOTHING: Absolutely zero plastic skin, zero generic AI smoothing, and zero synthetic "airbrushed" filter artifacts. Show authentic, pore-level skin texture, fine hair, and real light reflections.
+      2. CAMERA AND LENS: Capture using a high-end medium format camera (Phase One XF IQ4 150MP or Hasselblad H6D-100c) with a premium macro-capable prime lens (100mm f/8).
+      3. EXTREME DEPTH OF FIELD: Maintain deep sharp focus across the entire model and garment. Every stitch, zari wire, and bead from shoulder to hem must remain pin-sharp and crystal clear.
+      4. STUDIO LIGHTING: Render with high-CRI professional commercial studio lighting (crisp key light, subtle fill, and crisp rim highlights) to beautifully accentuate the embroidery texture, metallic shine, and fabric sheen.
     `;
 
   const generationConfig = {
@@ -378,7 +383,7 @@ export async function* streamPhotoshootImages(
         ${sessionLockProtocol}
         [REQUIRED POSE]: ${pose.prompt}
         ${consistencyPrompt}
-        [FINAL MANDATE]: Replicate the reference garment'S microscopic details with 100% accuracy. The output must look like a real, un-edited high-resolution photograph. No generic AI smoothing. Maintain every unique textile imperfection, seam pucker, and intricate embroidery motif.
+        [FINAL MANDATE]: Replicate the reference garment from Input Image 1's features, print, design, and colors with 100% accuracy. Ensure all garment work, stitch lines, prints, and embroideries are extremely sharp, high-definition, and look like a real physical photoshoot shot with a high-end commercial DSLR. Do NOT add any extra, new, or unrequested embroidery, thread-work, or patterns. Maintain every unique textile print and design feature with pristine clarity.
         `;
 
     const response = await generateWithRetry(
