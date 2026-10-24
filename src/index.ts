@@ -129,9 +129,14 @@ app.post("/generate-photoshoot", async (req: RequestWithId, res) => {
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("X-Accel-Buffering", "no");
 
+  let clientConnected = true;
+  res.on("close", () => {
+    clientConnected = false;
+  });
+
   let count = 0;
   try {
-    for await (const image of streamPhotoshootImages(body)) {
+    for await (const image of streamPhotoshootImages(body, () => clientConnected)) {
       res.write(JSON.stringify(image) + "\n");
       count++;
       console.log(`  [${requestId}] streamed [${image.poseTitle}] (${count}/${body.selectedPoses.length}) - ${((Date.now() - start) / 1000).toFixed(1)}s`);

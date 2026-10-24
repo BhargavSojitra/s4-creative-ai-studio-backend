@@ -221,8 +221,16 @@ const generateWithRetry = async (
   throw lastError;
 };
 
+function readPngDimensions(base64Data: string): { width: number; height: number } | null {
+  // PNG header: 8-byte signature, then IHDR chunk with width/height at bytes 16-23.
+  const header = Buffer.from(base64Data.slice(0, 48), "base64");
+  if (header.length < 24 || header.toString("ascii", 1, 4) !== "PNG") return null;
+  return { width: header.readUInt32BE(16), height: header.readUInt32BE(20) };
+}
+
 export async function* streamPhotoshootImages(
   body: GenerateRequestBody,
+  isClientConnected: () => boolean = () => true,
 ): AsyncGenerator<GeneratedImagePayload> {
   validateGenerateRequest(body);
 
@@ -366,6 +374,11 @@ export async function* streamPhotoshootImages(
   let firstGeneratedImagePart: unknown = null;
 
   for (const pose of body.selectedPoses) {
+    if (!isClientConnected()) {
+      console.warn(`  [${pose.title}] client disconnected - stopping generation`);
+      return;
+    }
+
     const currentInputParts = [...inputParts];
     let consistencyPrompt = "";
 
@@ -407,7 +420,10 @@ export async function* streamPhotoshootImages(
     const parts = (candidates[0].content as Record<string, unknown>).parts as Array<Record<string, unknown>>;
     console.log(`  [${pose.title}] parts count: ${parts?.length}, types: ${parts?.map(p => Object.keys(p).join('+')).join(', ')}`);
 
-    const generatedPart = parts?.find((p) => p.inlineData);
+    // Gemini thinking models may return intermediate draft images flagged with
+    // `thought: true` before the final image. Skip those and take the last real image.
+    const imageParts = (parts ?? []).filter((p) => p.inlineData && !p.thought);
+    const generatedPart = imageParts[imageParts.length - 1];
 
     if (!generatedPart?.inlineData) {
       console.error(`  [${pose.title}] parts detail:`, JSON.stringify(parts?.map(p => ({ keys: Object.keys(p), text: (p.text as string)?.slice(0, 200) })), null, 2));
@@ -417,6 +433,11 @@ export async function* streamPhotoshootImages(
     const inlineData = generatedPart.inlineData as { mimeType: string; data: string };
     const mimeType = inlineData.mimeType || "image/png";
     const imageData = inlineData.data;
+
+    const dimensions = readPngDimensions(imageData);
+    if (dimensions) {
+      console.log(`  [${pose.title}] output size: ${dimensions.width}x${dimensions.height} (requested ${body.imageSize})`);
+    }
 
     // Update consistency reference BEFORE yielding so we can release data after
     if (!firstGeneratedImagePart) {
