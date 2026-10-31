@@ -53,6 +53,8 @@ export type JobPose = {
   status: PoseStatus;
   attempts: number;
   key?: string;
+  // Small WebP preview of `key` for the UI; downloads always use `key`.
+  thumbKey?: string;
   mimeType?: string;
   width?: number;
   height?: number;

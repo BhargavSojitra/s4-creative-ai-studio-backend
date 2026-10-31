@@ -60,6 +60,8 @@ const serializePose = async (pose: JobPose, index: number, jobId: ObjectId) => (
   startedAt: pose.startedAt ?? null,
   finishedAt: pose.finishedAt ?? null,
   url: pose.status === "done" && pose.key ? await urlForKey(pose.key) : null,
+  // Small WebP for lists/grids only; null until the preview exists.
+  thumbUrl: pose.status === "done" && pose.thumbKey ? await urlForKey(pose.thumbKey) : null,
   downloadPath: pose.status === "done" && pose.key ? `/jobs/${jobId.toHexString()}/poses/${index}/file` : null,
   fileName: fileNameForPose(pose, index),
 });

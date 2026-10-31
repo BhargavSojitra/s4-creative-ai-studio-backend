@@ -18,6 +18,7 @@ import {
   prepareSession,
 } from "./gemini";
 import { extensionForMimeType, getObject, objectKey, putObject } from "./storage";
+import { backfillThumbnails, createThumbnail } from "./thumbnails";
 
 // Number of poses generated at the same time across all jobs. Pro Image on
 // Vertex starts returning 429s at a handful of concurrent calls, so keep this
@@ -219,11 +220,22 @@ const runPose = async ({ job, poseIndex }: Claim): Promise<void> => {
       "outputs",
       `${poseIndex + 1}-${slug(pose.title)}.${extensionForMimeType(image.mimeType)}`,
     );
-    await putObject(key, Buffer.from(image.data, "base64"), image.mimeType);
+    const original = Buffer.from(image.data, "base64");
+    await putObject(key, original, image.mimeType);
+
+    // Preview is best-effort: a thumbnail problem must never fail the pose.
+    // The startup backfill picks up any pose left without one.
+    let thumbKey: string | undefined;
+    try {
+      thumbKey = await createThumbnail(key, original);
+    } catch (error) {
+      console.warn(`  ${tag} preview failed - ${briefError(error)}`);
+    }
 
     await setPose(job._id, poseIndex, {
       status: "done",
       key,
+      ...(thumbKey ? { thumbKey } : {}),
       mimeType: image.mimeType,
       width: image.width,
       height: image.height,
@@ -308,6 +320,7 @@ export const startWorker = async (): Promise<void> => {
 
   await recoverInterruptedPoses();
   console.log(`  [worker] started with ${CONCURRENCY} slot(s), max ${MAX_ATTEMPTS} attempt(s) per pose`);
+  void backfillThumbnails();
 
   const loop = async () => {
     while (true) {
