@@ -88,7 +88,7 @@ app.use(
       }
       callback(new AppError(`CORS origin ${origin} is not allowed.`, 403, "FORBIDDEN_ORIGIN"));
     },
-    methods: ["GET", "POST", "OPTIONS"],
+    methods: ["GET", "POST", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   }),
 );

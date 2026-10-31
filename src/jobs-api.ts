@@ -16,6 +16,7 @@ import { AppError, type GenerateRequestBody, validateGenerateRequest } from "./g
 import { wakeWorker, workerStats } from "./queue";
 import {
   assertStorageConfiguration,
+  deletePrefix,
   extensionForMimeType,
   getObjectStream,
   objectKey,
@@ -313,4 +314,22 @@ router.post("/jobs/:id/retry", asyncHandler(async (req, res) => {
 
   const [serialized] = await serializeJobs([await findJobOrThrow(id)]);
   res.json(serialized);
+}));
+
+// Permanently removes a finished job: its inputs and outputs in R2 and the
+// job document. Used once the user has downloaded what they need, so storage
+// does not grow forever. Active jobs must be cancelled first.
+router.delete("/jobs/:id", asyncHandler(async (req, res) => {
+  const id = requireJobId(req.params.id);
+  const job = await findJobOrThrow(id);
+
+  if ((ACTIVE_STATUSES as readonly string[]).includes(job.status)) {
+    throw new AppError("Cancel the job before deleting it.", 409, "JOB_ACTIVE");
+  }
+
+  const removed = await deletePrefix(`${objectKey("jobs", id.toHexString())}/`);
+  await jobs().deleteOne({ _id: id });
+  console.log(`  [job ${id}] deleted by user (${removed} file(s) removed from storage)`);
+
+  res.json({ id: id.toHexString(), deleted: true, filesRemoved: removed });
 }));

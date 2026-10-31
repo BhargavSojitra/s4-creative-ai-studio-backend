@@ -206,6 +206,13 @@ const runPose = async ({ job, poseIndex }: Claim): Promise<void> => {
 
     const image = await generatePoseImage(getAi(), session, pose, reference, job.params.imageSize);
 
+    // The job may have been cancelled and deleted while this pose rendered;
+    // don't leave an orphan file in storage.
+    if (!(await jobs().findOne({ _id: job._id }, { projection: { _id: 1 } }))) {
+      console.log(`  ${tag} discarded - job was deleted while rendering`);
+      return;
+    }
+
     const key = objectKey(
       "jobs",
       job._id.toHexString(),
