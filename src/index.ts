@@ -53,7 +53,10 @@ app.use((req: RequestWithId, res, next) => {
   };
 
   res.on("finish", () => {
-    if (res.statusCode >= 400) logLine("ERROR", "error");
+    // 503 on polling GETs happens every few seconds while the DB is unreachable;
+    // the "[db] connect failed" line already reports that once per retry.
+    const quietOutage = res.statusCode === 503 && !isWrite;
+    if (res.statusCode >= 400 && !quietOutage) logLine("ERROR", "error");
     else if (LOG_ALL_REQUESTS) logLine("ok", "log");
   });
 
@@ -155,8 +158,9 @@ app.use((error: unknown, req: RequestWithId, res: express.Response, _next: expre
   const requestId = req.requestId ?? "unknown";
   // Expected client errors (validation, not found, conflicts) are summarised by
   // the request logger's one-line ERROR entry; only real failures get a stack.
-  const isClientError = error instanceof AppError && error.statusCode < 500;
-  if (!isClientError) {
+  // AppErrors are deliberate (validation, not found, queue unavailable) so they
+  // never need a stack trace.
+  if (!(error instanceof AppError)) {
     console.error(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} [${requestId}] unhandled error: ${briefError(error)}`);
   }
 
@@ -180,27 +184,45 @@ app.use((error: unknown, req: RequestWithId, res: express.Response, _next: expre
   return sendJsonError(res, error);
 });
 
-const bootstrap = async () => {
-  if (isDbConfigured()) {
+const DB_RETRY_MS = 30_000;
+
+// Connect to MongoDB and start the worker. If Atlas is unreachable (for example
+// the Railway IP is not in the Atlas access list yet) the server keeps serving
+// /generate-photoshoot, the queue routes answer 503 QUEUE_UNAVAILABLE, and we
+// retry every 30s so a fix on the Atlas side heals without a redeploy.
+const startQueue = async (attempt = 1): Promise<void> => {
+  try {
     await connectDb();
-    if (isStorageConfigured()) {
-      await startWorker();
-    } else {
-      console.warn("  [worker] R2 is not configured - jobs can be queued but will not be processed.");
-    }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    const hint = /tlsv1 alert internal error|SSL alert number 80/i.test(reason)
+      ? " (Atlas rejected the TLS handshake: add this server's IP, or 0.0.0.0/0, in Atlas Network Access)"
+      : "";
+    console.error(`  [db] connect failed (attempt ${attempt}), retrying in ${DB_RETRY_MS / 1000}s - ${reason}${hint}`);
+    setTimeout(() => void startQueue(attempt + 1), DB_RETRY_MS).unref();
+    return;
+  }
+
+  if (isStorageConfigured()) {
+    await startWorker();
+  } else {
+    console.warn("  [worker] R2 is not configured - jobs can be queued but will not be processed.");
+  }
+};
+
+const bootstrap = async () => {
+  app.listen(Number(PORT), HOST, () => {
+    console.log(`S4 Textile Backend running on ${HOST}:${PORT} (${BASE_URL})`);
+  });
+
+  if (isDbConfigured()) {
+    await startQueue();
   } else {
     console.warn("  [worker] MONGODB_URI not set - job queue disabled, only /generate-photoshoot is available.");
   }
-
-  app.listen(PORT, () => {
-    console.log(`S4 Textile Backend running on port ${PORT}`);
-    console.log(`Host: ${HOST}`);
-    console.log(`Base URL: ${BASE_URL}`);
-  });
 };
 
 bootstrap().catch((error) => {
-  console.error("Failed to start:", extractErrorMessage(error));
-  console.error(error);
+  console.error("Failed to start:", briefError(error));
   process.exit(1);
 });

@@ -2,6 +2,7 @@ import express from "express";
 import {
   INPUT_IMAGE_FIELDS,
   isDbConfigured,
+  isDbConnected,
   type JobDoc,
   type JobPose,
   jobs,
@@ -121,6 +122,9 @@ export const router = express.Router();
 router.use((_req, _res, next) => {
   if (!isDbConfigured()) {
     return next(new AppError("Job queue is not configured on this server (MONGODB_URI missing).", 503, "QUEUE_DISABLED"));
+  }
+  if (!isDbConnected()) {
+    return next(new AppError("Job queue database is not reachable right now, retrying in the background.", 503, "QUEUE_UNAVAILABLE"));
   }
   next();
 });

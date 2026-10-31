@@ -86,14 +86,22 @@ let db: Db | null = null;
 
 export const isDbConfigured = (): boolean => Boolean(process.env.MONGODB_URI);
 
+export const isDbConnected = (): boolean => db !== null;
+
 export const connectDb = async (): Promise<Db> => {
   if (db) return db;
 
   const uri = process.env.MONGODB_URI;
   if (!uri) throw new Error("MONGODB_URI is not set.");
 
-  client = new MongoClient(uri, { serverSelectionTimeoutMS: 15000 });
-  await client.connect();
+  const candidate = new MongoClient(uri, { serverSelectionTimeoutMS: 15000 });
+  try {
+    await candidate.connect();
+  } catch (error) {
+    await candidate.close().catch(() => undefined);
+    throw error;
+  }
+  client = candidate;
   db = client.db(process.env.MONGODB_DB || undefined);
 
   await Promise.all([
