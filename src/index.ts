@@ -49,7 +49,9 @@ app.use((req: RequestWithId, res, next) => {
     if (logged) return;
     logged = true;
     const durationSeconds = ((Date.now() - start) / 1000).toFixed(1);
-    console[level](`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} ${note} status=${res.statusCode} ${durationSeconds}s [${requestId}]`);
+    // A 403 here is almost always a CORS rejection, so name the origin.
+    const origin = res.statusCode === 403 && req.headers.origin ? ` origin=${req.headers.origin}` : "";
+    console[level](`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} ${note} status=${res.statusCode}${origin} ${durationSeconds}s [${requestId}]`);
   };
 
   res.on("finish", () => {
