@@ -6,9 +6,9 @@ import { tmpdir } from "os";
 const MODEL_NAME =
   process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image-preview";
 
-type Pose = { id: string; title: string; prompt: string; category?: string };
+export type Pose = { id: string; title: string; prompt: string; category?: string };
 
-type InlineImagePayload = { data: string; mimeType: string };
+export type InlineImagePayload = { data: string; mimeType: string };
 
 export type GenerateRequestBody = {
   garmentImage: InlineImagePayload | null;
@@ -54,6 +54,14 @@ const delay = (ms: number) =>
 const imagePart = (image: InlineImagePayload) => ({
   inlineData: { data: image.data, mimeType: image.mimeType },
 });
+
+/** Message plus the first few stack frames, for one-line error logs. */
+export const briefError = (error: unknown): string => {
+  if (error instanceof Error && error.stack) {
+    return error.stack.split("\n").slice(0, 4).map((l) => l.trim()).join(" <- ");
+  }
+  return extractErrorMessage(error);
+};
 
 export const extractErrorMessage = (error: unknown): string => {
   if (error instanceof AppError) return `${error.code}: ${error.message}`;
@@ -188,6 +196,21 @@ const createClient = (): GoogleGenAI => {
   return new GoogleGenAI({ vertexai: true, project, location });
 };
 
+export const createGeminiClient = createClient;
+
+export const isRetryableError = (error: unknown): boolean => {
+  const err = (error ?? {}) as Record<string, unknown>;
+  const msg = String(err.message || "").toLowerCase();
+  const status = err.status as number;
+  return (
+    [429, 500, 503, 504].includes(status) ||
+    msg.includes("overloaded") ||
+    msg.includes("unavailable") ||
+    msg.includes("resource_exhausted") ||
+    msg.includes("rate limit")
+  );
+};
+
 const generateWithRetry = async (
   ai: GoogleGenAI,
   model: string,
@@ -202,15 +225,8 @@ const generateWithRetry = async (
       return await ai.models.generateContent({ model, contents: contents as never, config: config as never });
     } catch (error: unknown) {
       lastError = error;
-      const err = error as Record<string, unknown>;
-      const msg = String(err.message || "").toLowerCase();
-      const status = err.status as number;
-      const isRetryable =
-        [429, 500, 503, 504].includes(status) ||
-        msg.includes("overloaded") ||
-        msg.includes("unavailable");
 
-      if (isRetryable && i < maxRetries) {
+      if (isRetryableError(error) && i < maxRetries) {
         await delay(Math.pow(2, i) * 4000 + Math.random() * 1000);
         continue;
       }
@@ -228,13 +244,24 @@ function readPngDimensions(base64Data: string): { width: number; height: number 
   return { width: header.readUInt32BE(16), height: header.readUInt32BE(20) };
 }
 
-export async function* streamPhotoshootImages(
-  body: GenerateRequestBody,
-  isClientConnected: () => boolean = () => true,
-): AsyncGenerator<GeneratedImagePayload> {
-  validateGenerateRequest(body);
+export type GeneratedImage = {
+  mimeType: string;
+  data: string; // base64
+  width?: number;
+  height?: number;
+};
 
-  const ai = createClient();
+export type PreparedSession = {
+  inputParts: unknown[];
+  sessionLockProtocol: string;
+  generationConfig: Record<string, unknown>;
+};
+
+// Builds the input image parts and the session-wide prompt once per job.
+// Every pose of the job reuses this; only the pose prompt and the consistency
+// reference change between calls.
+export function prepareSession(body: GenerateRequestBody): PreparedSession {
+  validateGenerateRequest(body);
 
   const expressionPrompt = body.expressionPrompt || "";
   const necklinePrompt = body.necklinePrompt || "";
@@ -371,90 +398,112 @@ export async function* streamPhotoshootImages(
     ],
   };
 
-  let firstGeneratedImagePart: unknown = null;
+  return { inputParts, sessionLockProtocol, generationConfig };
+}
 
-  for (const pose of body.selectedPoses) {
-    if (!isClientConnected()) {
-      console.warn(`  [${pose.title}] client disconnected - stopping generation`);
-      return;
-    }
+// Generates one pose. `referenceImage` is the first finished image of the job;
+// when present it is appended as an extra input with the consistency lock so
+// the background and model look stay identical across poses.
+export async function generatePoseImage(
+  ai: GoogleGenAI,
+  session: PreparedSession,
+  pose: Pose,
+  referenceImage: GeneratedImage | null,
+  // Kept for call-site clarity; the requested size is logged by the caller.
+  _requestedSize?: string,
+): Promise<GeneratedImage> {
+  const currentInputParts = [...session.inputParts];
+  let consistencyPrompt = "";
 
-    const currentInputParts = [...inputParts];
-    let consistencyPrompt = "";
-
-    if (firstGeneratedImagePart) {
-      currentInputParts.push(firstGeneratedImagePart);
-      consistencyPrompt = `
-            [STRICT CONSISTENCY LOCK]: 
+  if (referenceImage) {
+    currentInputParts.push({ inlineData: { data: referenceImage.data, mimeType: referenceImage.mimeType } });
+    consistencyPrompt = `
+            [STRICT CONSISTENCY LOCK]:
             1. EXACT SAME BACKGROUND: You MUST use the exact same background/location/environment as shown in the provided generated reference image. Do not change the setting.
             2. EXACT SAME MODEL LOOK: The model's face, facial features, hairstyle, makeup, and skin tone MUST be identical to the provided generated reference image.
             3. Only change the pose/movement to match the [REQUIRED POSE].
             `;
-    }
+  }
 
-    const fullPrompt = `
-        ${sessionLockProtocol}
+  const fullPrompt = `
+        ${session.sessionLockProtocol}
         [REQUIRED POSE]: ${pose.prompt}
         ${consistencyPrompt}
         [FINAL MANDATE]: Replicate the reference garment from Input Image 1's features, print, design, and colors with 100% accuracy. Ensure all garment work, stitch lines, prints, and embroideries are extremely sharp, high-definition, and look like a real physical photoshoot shot with a high-end commercial DSLR. Do NOT add any extra, new, or unrequested embroidery, thread-work, or patterns. Maintain every unique textile print and design feature with pristine clarity.
         `;
 
-    const response = await generateWithRetry(
-      ai,
-      MODEL_NAME,
-      [{ role: "user", parts: [...currentInputParts, { text: fullPrompt }] }],
-      generationConfig,
-    ) as Record<string, unknown>;
+  const response = await generateWithRetry(
+    ai,
+    MODEL_NAME,
+    [{ role: "user", parts: [...currentInputParts, { text: fullPrompt }] }],
+    session.generationConfig,
+  ) as Record<string, unknown>;
 
-    const candidates = response.candidates as Array<Record<string, unknown>>;
+  const candidates = response.candidates as Array<Record<string, unknown>>;
 
-    console.log(`  [${pose.title}] candidates count: ${candidates?.length}`);
-    console.log(`  [${pose.title}] finishReason: ${candidates?.[0]?.finishReason}`);
-    console.log(`  [${pose.title}] safetyRatings:`, JSON.stringify(candidates?.[0]?.safetyRatings ?? []));
+  const finishReason = candidates?.[0]?.finishReason;
+  const blockedRatings = ((candidates?.[0]?.safetyRatings ?? []) as Array<Record<string, unknown>>)
+    .filter((r) => r.blocked || (r.probability && r.probability !== "NEGLIGIBLE" && r.probability !== "LOW"));
 
-    if (!candidates?.[0]?.content) {
-      console.error(`  [${pose.title}] full response:`, JSON.stringify(response, null, 2));
-      throw new Error(`Empty response for pose: ${pose.title}`);
+  if (!candidates?.[0]?.content) {
+    // Images are not present here, so a trimmed dump is safe and enough to debug.
+    console.error(`  [${pose.title}] empty response (finishReason=${finishReason}):`, JSON.stringify(response).slice(0, 2000));
+    throw new Error(`Empty response for pose: ${pose.title}`);
+  }
+
+  const parts = (candidates[0].content as Record<string, unknown>).parts as Array<Record<string, unknown>>;
+  // Only log the response shape when something looks off (blocked, truncated, no image).
+  const hasImage = (parts ?? []).some((p) => p.inlineData && !p.thought);
+  if (!hasImage || (finishReason && finishReason !== "STOP") || blockedRatings.length) {
+    const partTypes = parts?.map((p) => `${p.thought ? "thought:" : ""}${Object.keys(p).filter((k) => k !== "thought").join("+")}`).join(", ");
+    console.warn(`  [${pose.title}] response: finish=${finishReason} parts=[${partTypes}]${blockedRatings.length ? ` safety=${JSON.stringify(blockedRatings)}` : ""}`);
+  }
+
+  // Gemini thinking models may return intermediate draft images flagged with
+  // `thought: true` before the final image. Skip those and take the last real image.
+  const imageParts = (parts ?? []).filter((p) => p.inlineData && !p.thought);
+  const generatedPart = imageParts[imageParts.length - 1];
+
+  if (!generatedPart?.inlineData) {
+    console.error(`  [${pose.title}] parts detail:`, JSON.stringify(parts?.map(p => ({ keys: Object.keys(p), text: (p.text as string)?.slice(0, 200) })), null, 2));
+    throw new Error(`No image data for pose: ${pose.title}`);
+  }
+
+  const inlineData = generatedPart.inlineData as { mimeType: string; data: string };
+  const mimeType = inlineData.mimeType || "image/png";
+  const imageData = inlineData.data;
+
+  const dimensions = readPngDimensions(imageData);
+  return { mimeType, data: imageData, ...dimensions };
+}
+
+// Legacy streaming path used by POST /generate-photoshoot. The queue worker in
+// queue.ts uses prepareSession/generatePoseImage directly.
+export async function* streamPhotoshootImages(
+  body: GenerateRequestBody,
+  isClientConnected: () => boolean = () => true,
+): AsyncGenerator<GeneratedImagePayload> {
+  validateGenerateRequest(body);
+
+  const ai = createClient();
+  const session = prepareSession(body);
+  let reference: GeneratedImage | null = null;
+
+  for (const [index, pose] of body.selectedPoses.entries()) {
+    if (!isClientConnected()) {
+      console.warn(`  [${pose.title}] client disconnected - stopping generation`);
+      return;
     }
 
-    const parts = (candidates[0].content as Record<string, unknown>).parts as Array<Record<string, unknown>>;
-    console.log(`  [${pose.title}] parts count: ${parts?.length}, types: ${parts?.map(p => Object.keys(p).join('+')).join(', ')}`);
-
-    // Gemini thinking models may return intermediate draft images flagged with
-    // `thought: true` before the final image. Skip those and take the last real image.
-    const imageParts = (parts ?? []).filter((p) => p.inlineData && !p.thought);
-    const generatedPart = imageParts[imageParts.length - 1];
-
-    if (!generatedPart?.inlineData) {
-      console.error(`  [${pose.title}] parts detail:`, JSON.stringify(parts?.map(p => ({ keys: Object.keys(p), text: (p.text as string)?.slice(0, 200) })), null, 2));
-      throw new Error(`No image data for pose: ${pose.title}`);
-    }
-
-    const inlineData = generatedPart.inlineData as { mimeType: string; data: string };
-    const mimeType = inlineData.mimeType || "image/png";
-    const imageData = inlineData.data;
-
-    const dimensions = readPngDimensions(imageData);
-    if (dimensions) {
-      console.log(`  [${pose.title}] output size: ${dimensions.width}x${dimensions.height} (requested ${body.imageSize})`);
-    }
-
-    // Update consistency reference BEFORE yielding so we can release data after
-    if (!firstGeneratedImagePart) {
-      firstGeneratedImagePart = { inlineData: { data: imageData, mimeType } };
-    }
+    const image = await generatePoseImage(ai, session, pose, reference, body.imageSize);
+    if (!reference) reference = image;
 
     yield {
       poseTitle: pose.title,
-      url: `data:${mimeType};base64,${imageData}`,
+      url: `data:${image.mimeType};base64,${image.data}`,
     };
 
-    // Explicitly release the large base64 payload from the response object
-    // so the GC can reclaim it before the next iteration.
-    (generatedPart.inlineData as Record<string, unknown>).data = null;
-    (response as Record<string, unknown>).candidates = null;
-
-    if (body.selectedPoses.indexOf(pose) < body.selectedPoses.length - 1) {
+    if (index < body.selectedPoses.length - 1) {
       await delay(1500);
     }
   }
