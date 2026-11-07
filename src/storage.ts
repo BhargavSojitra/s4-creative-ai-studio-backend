@@ -1,4 +1,5 @@
 import {
+  CopyObjectCommand,
   DeleteObjectsCommand,
   GetObjectCommand,
   ListObjectsV2Command,
@@ -52,6 +53,37 @@ export const extensionForMimeType = (mimeType: string): string => {
 
 export const putObject = async (key: string, body: Buffer, contentType: string): Promise<void> => {
   await getClient().send(new PutObjectCommand({ Bucket: R2_BUCKET, Key: key, Body: body, ContentType: contentType }));
+};
+
+/** Server-side copy inside the bucket (no download), e.g. staged upload -> job input. */
+export const copyObject = async (fromKey: string, toKey: string, contentType?: string): Promise<void> => {
+  await getClient().send(
+    new CopyObjectCommand({
+      Bucket: R2_BUCKET,
+      CopySource: `/${R2_BUCKET}/${encodeURIComponent(fromKey).replace(/%2F/g, "/")}`,
+      Key: toKey,
+      ...(contentType ? { ContentType: contentType, MetadataDirective: "REPLACE" } : {}),
+    }),
+  );
+};
+
+/** Deletes objects under `prefix` last modified before `olderThan`. Returns the count. */
+export const deleteStaleObjects = async (prefix: string, olderThan: Date): Promise<number> => {
+  const client = getClient();
+  let deleted = 0;
+  let token: string | undefined;
+  do {
+    const page = await client.send(new ListObjectsV2Command({ Bucket: R2_BUCKET, Prefix: prefix, ContinuationToken: token }));
+    const keys = (page.Contents ?? []).flatMap((o) =>
+      o.Key && o.LastModified && o.LastModified < olderThan ? [{ Key: o.Key }] : [],
+    );
+    if (keys.length) {
+      await client.send(new DeleteObjectsCommand({ Bucket: R2_BUCKET, Delete: { Objects: keys, Quiet: true } }));
+      deleted += keys.length;
+    }
+    token = page.IsTruncated ? page.NextContinuationToken : undefined;
+  } while (token);
+  return deleted;
 };
 
 /** Deletes every object under `prefix` (inputs and outputs of one job). Returns the count. */

@@ -12,10 +12,11 @@ import {
   type UserDoc,
   users,
 } from "./db";
-import { AppError, type GenerateRequestBody, validateGenerateRequest } from "./gemini";
+import { AppError, type GenerateRequestBody, type InlineImagePayload, validateGenerateRequest } from "./gemini";
 import { wakeWorker, workerStats } from "./queue";
 import {
   assertStorageConfiguration,
+  copyObject,
   deletePrefix,
   extensionForMimeType,
   getObjectStream,
@@ -23,8 +24,16 @@ import {
   putObject,
   urlForKey,
 } from "./storage";
+import { isStagedUploadKey, isUploadedImageRef, type UploadedImageRef } from "./uploads-api";
 
-type CreateJobBody = GenerateRequestBody & { userId?: string; urgent?: boolean };
+// Images arrive as staged-upload references from POST /uploads. Inline base64
+// is still accepted so a frontend build from before the upload endpoint keeps
+// working; it is subject to the JSON body limit.
+type JobImageInput = UploadedImageRef | InlineImagePayload | null | undefined;
+
+type CreateJobBody = Omit<GenerateRequestBody, (typeof INPUT_IMAGE_FIELDS)[number]>
+  & Partial<Record<(typeof INPUT_IMAGE_FIELDS)[number], JobImageInput>>
+  & { userId?: string; urgent?: boolean };
 
 type Handler = (req: express.Request, res: express.Response) => Promise<unknown>;
 
@@ -158,8 +167,15 @@ router.post("/jobs", asyncHandler(async (req, res) => {
   const user = await users().findOne({ _id: userId });
   if (!user) throw new AppError("User not found.", 404, "USER_NOT_FOUND");
 
-  validateGenerateRequest(body);
+  validateGenerateRequest(body as GenerateRequestBody);
   assertStorageConfiguration();
+
+  for (const field of INPUT_IMAGE_FIELDS) {
+    const image = body[field];
+    if (isUploadedImageRef(image) && !isStagedUploadKey(image.key)) {
+      throw new AppError(`${field} does not reference a staged upload.`, 400, "INVALID_IMAGE_REF");
+    }
+  }
 
   const jobId = new ObjectId();
   const inputs: Partial<Record<(typeof INPUT_IMAGE_FIELDS)[number], StoredImageRef>> = {};
@@ -167,9 +183,25 @@ router.post("/jobs", asyncHandler(async (req, res) => {
   await Promise.all(
     INPUT_IMAGE_FIELDS.map(async (field) => {
       const image = body[field];
-      if (!image?.data || !image?.mimeType) return;
+      if (!image?.mimeType) return;
       const key = objectKey("jobs", jobId.toHexString(), "inputs", `${field}.${extensionForMimeType(image.mimeType)}`);
-      await putObject(key, Buffer.from(image.data, "base64"), image.mimeType);
+      if (isUploadedImageRef(image)) {
+        // Copy (not move): the same staged upload may feed several jobs
+        // (upscales, "add another job"); the sweep removes it later.
+        try {
+          await copyObject(image.key, key, image.mimeType);
+        } catch (error) {
+          const name = error instanceof Error ? error.name : "";
+          if (name === "NoSuchKey" || name === "NotFound") {
+            throw new AppError(`${field} upload has expired, please re-select the image.`, 410, "UPLOAD_EXPIRED");
+          }
+          throw error;
+        }
+      } else if (image.data) {
+        await putObject(key, Buffer.from(image.data, "base64"), image.mimeType);
+      } else {
+        return;
+      }
       inputs[field] = { key, mimeType: image.mimeType };
     }),
   );

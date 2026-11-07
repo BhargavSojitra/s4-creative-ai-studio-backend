@@ -129,7 +129,10 @@ export function validateGenerateRequest(
     throw new AppError("Request body must be a JSON object.", 400, "INVALID_BODY");
   }
 
-  if (!body.garmentImage?.data || !body.garmentImage?.mimeType) {
+  // Inline base64 (legacy /generate-photoshoot) or a staged-upload reference
+  // ({ key, mimeType } from POST /uploads) are both acceptable here.
+  const garment = body.garmentImage as { data?: string; key?: string; mimeType?: string } | null | undefined;
+  if (!garment?.mimeType || !(garment.data || garment.key)) {
     throw new AppError("Upload a garment image.", 400, "MISSING_GARMENT_IMAGE");
   }
 

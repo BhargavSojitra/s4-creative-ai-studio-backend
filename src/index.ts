@@ -13,6 +13,7 @@ import {
 import { router as jobsRouter } from "./jobs-api";
 import { startWorker } from "./queue";
 import { isStorageConfigured } from "./storage";
+import { router as uploadsRouter, scheduleUploadSweep } from "./uploads-api";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -70,7 +71,8 @@ app.use((req: RequestWithId, res, next) => {
   next();
 });
 
-// Allow large base64 payloads; keep limit configurable for different deploy targets.
+// Images are uploaded as multipart files (POST /uploads), so JSON bodies are
+// small. The limit stays generous for the legacy inline-base64 route.
 app.use(express.json({ limit: REQUEST_BODY_LIMIT }));
 app.use(express.urlencoded({ extended: true, limit: REQUEST_BODY_LIMIT }));
 
@@ -152,6 +154,9 @@ app.post("/generate-photoshoot", async (req: RequestWithId, res) => {
   res.end();
 });
 
+// Reference image staging (multipart): POST /uploads -> { key, mimeType, size }.
+app.use(uploadsRouter);
+
 // Queue-based generation: POST /jobs, GET /queue, GET /jobs, GET /jobs/:id,
 // POST /jobs/:id/cancel, POST /jobs/:id/retry, GET|POST /users.
 app.use(jobsRouter);
@@ -216,6 +221,8 @@ const bootstrap = async () => {
   app.listen(Number(PORT), HOST, () => {
     console.log(`S4 Textile Backend running on ${HOST}:${PORT} (${BASE_URL})`);
   });
+
+  if (isStorageConfigured()) scheduleUploadSweep();
 
   if (isDbConfigured()) {
     await startQueue();
